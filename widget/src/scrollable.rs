@@ -39,6 +39,8 @@ use crate::core::{
     Rectangle, Shadow, Shell, Size, Theme, Vector, Widget,
 };
 
+use iced_renderer::core::Animation;
+use iced_renderer::core::animation::Easing;
 pub use operation::scrollable::{AbsoluteOffset, RelativeOffset};
 
 /// A widget that can vertically display an infinite amount of content with a
@@ -76,6 +78,7 @@ where
     content: Element<'a, Message, Theme, Renderer>,
     on_scroll: Option<Box<dyn Fn(Viewport) -> Message + 'a>>,
     class: Theme::Class<'a>,
+    smooth_scroll: bool,
 }
 
 impl<'a, Message, Theme, Renderer> Scrollable<'a, Message, Theme, Renderer>
@@ -102,6 +105,7 @@ where
             content: content.into(),
             on_scroll: None,
             class: Theme::default(),
+            smooth_scroll: false,
         }
     }
 
@@ -208,6 +212,14 @@ where
     /// By default, it is disabled.
     pub fn auto_scroll(mut self, auto_scroll: bool) -> Self {
         self.auto_scroll = auto_scroll;
+        self
+    }
+
+    /// Sets whether the [`Scrollable`] will animate the scroll from mouse wheel.
+    ///
+    /// By default, it is disabled.
+    pub fn smooth_scroll(mut self, smooth_scroll: bool) -> Self {
+        self.smooth_scroll = smooth_scroll;
         self
     }
 
@@ -802,15 +814,40 @@ where
                         mouse::ScrollDelta::Pixels { x, y } => -Vector::new(x, y),
                     };
 
-                    state.scroll(self.direction.align(delta), bounds, content_bounds);
+                    if self.smooth_scroll {
+                        let delta = self.direction.align(delta);
+                        let now = Instant::now();
+                        match state.interaction {
+                            Interaction::SmoothScrolling {
+                                total,
+                                last_progress,
+                                ..
+                            } => {
+                                let remaining = total - last_progress;
+                                let new_total = delta + remaining;
+                                state.interaction = Interaction::smooth_scrolling(new_total, now);
+                            }
+                            _ => {
+                                if delta.x != 0.0 || delta.y != 0.0 {
+                                    state.interaction = Interaction::smooth_scrolling(delta, now);
+                                }
+                            }
+                        }
+                        if matches!(state.interaction, Interaction::SmoothScrolling { .. }) {
+                            shell.capture_event();
+                            shell.request_redraw();
+                        }
+                    } else {
+                        state.scroll(self.direction.align(delta), bounds, content_bounds);
 
-                    let has_scrolled =
-                        notify_scroll(state, &self.on_scroll, bounds, content_bounds, shell);
+                        let has_scrolled =
+                            notify_scroll(state, &self.on_scroll, bounds, content_bounds, shell);
 
-                    let in_transaction = state.last_scrolled.is_some();
+                        let in_transaction = state.last_scrolled.is_some();
 
-                    if has_scrolled || in_transaction {
-                        shell.capture_event();
+                        if has_scrolled || in_transaction {
+                            shell.capture_event();
+                        }
                     }
                 }
                 Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle))
@@ -970,6 +1007,40 @@ where
 
                             return;
                         }
+                    }
+
+                    if let Interaction::SmoothScrolling {
+                        animation,
+                        total,
+                        last_progress,
+                    } = state.interaction.clone()
+                    {
+                        let progress = total * animation.interpolate(*now);
+                        let delta_progress = progress - last_progress;
+                        let scrolling = if delta_progress != Vector::ZERO {
+                            state.scroll(
+                                self.direction.align(delta_progress),
+                                bounds,
+                                content_bounds,
+                            );
+                            notify_scroll(state, &self.on_scroll, bounds, content_bounds, shell)
+                        } else {
+                            true
+                        };
+
+                        if scrolling && animation.is_animating(*now) {
+                            state.interaction = Interaction::SmoothScrolling {
+                                animation,
+                                total,
+                                last_progress: progress,
+                            };
+
+                            shell.request_redraw();
+                        } else {
+                            state.interaction = Interaction::None;
+                        }
+
+                        return;
                     }
 
                     let _ = notify_viewport(state, &self.on_scroll, bounds, content_bounds, shell);
@@ -1487,7 +1558,7 @@ fn notify_viewport<Message>(
     true
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct State {
     offset_y: Offset,
     offset_x: Offset,
@@ -1499,17 +1570,35 @@ struct State {
     last_status: Option<Status>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Interaction {
     None,
     YScrollerGrabbed(f32),
     XScrollerGrabbed(f32),
     TouchScrolling(Point),
+    SmoothScrolling {
+        animation: Animation<f32>,
+        total: Vector<f32>,
+        last_progress: Vector<f32>,
+    },
     AutoScrolling {
         origin: Point,
         current: Point,
         last_frame: Option<Instant>,
     },
+}
+
+impl Interaction {
+    fn smooth_scrolling(total: Vector<f32>, now: Instant) -> Self {
+        Self::SmoothScrolling {
+            animation: Animation::new(0.0)
+                .quick()
+                .easing(Easing::EaseOutQuad)
+                .go(1.0, now),
+            total,
+            last_progress: Vector::ZERO,
+        }
+    }
 }
 
 impl Default for State {
