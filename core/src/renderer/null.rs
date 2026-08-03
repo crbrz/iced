@@ -229,6 +229,10 @@ impl text::Editor for () {
     ) {
     }
 
+    fn search(&mut self, _text: &str, _forwards: bool, _wrap_around: bool) -> bool {
+        false
+    }
+
     fn text_size(&self) -> Pixels {
         Pixels(0.0)
     }
