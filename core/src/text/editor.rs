@@ -81,6 +81,9 @@ pub trait Editor: Sized + Default {
         highlight: impl Fn(P::Output) -> highlighter::Style,
     );
 
+    /// Search for text in [`Editor`] contents
+    fn search(&mut self, text: &str, forwards: bool, wrap_around: bool) -> bool;
+
     /// Returns an iterator of the text of the lines in the [`Editor`].
     fn lines(&self) -> impl Iterator<Item = Line<'_>> {
         (0..)
