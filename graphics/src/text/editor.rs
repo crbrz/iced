@@ -876,6 +876,79 @@ impl editor::Editor for Editor {
         self.0 = Some(Arc::new(internal));
     }
 
+    fn search(&mut self, text: &str, forwards: bool, wrap_around: bool) -> bool {
+        let internal = self.internal();
+        let mut cursor = internal.editor.cursor();
+        let mut wrapped = false; // Keeps track of whether the search has wrapped around yet.
+        let start_line = cursor.line;
+
+        if forwards {
+            while cursor.line < self.buffer().lines.len() {
+                if let Some(pos) = self.buffer().lines[cursor.line].text().find(text) {
+                    if cursor.line != start_line
+                        || pos > cursor.index
+                        || pos < cursor.index && wrapped
+                    {
+                        cursor.index = pos;
+                        self.with_internal_mut(|internal| {
+                            internal.editor.set_cursor(cursor);
+
+                            // highlight searched text
+                            internal
+                                .editor
+                                .set_selection(cosmic_text::Selection::Normal(
+                                    cosmic_text::Cursor::new(cursor.line, pos + text.len()),
+                                ));
+                        });
+
+                        return true;
+                    }
+                }
+
+                cursor.line += 1;
+
+                if wrap_around && !wrapped && cursor.line == self.buffer().lines.len() {
+                    cursor.line = 0;
+                    wrapped = true;
+                }
+            }
+        } else {
+            cursor.line += 1;
+            while cursor.line > 0 {
+                cursor.line -= 1;
+
+                if let Some(pos) = self.buffer().lines[cursor.line].text().find(text) {
+                    if cursor.line != start_line
+                        || pos < cursor.index
+                        || pos > cursor.index && wrapped
+                    {
+                        cursor.index = pos;
+                        self.with_internal_mut(|internal| {
+                            internal.editor.set_cursor(cursor);
+
+                            // highlight searched text
+                            internal
+                                .editor
+                                .set_selection(cosmic_text::Selection::Normal(
+                                    cosmic_text::Cursor::new(cursor.line, pos + text.len()),
+                                ));
+                        });
+
+                        return true;
+                    }
+                }
+
+                // If we haven't wrapped yet and we've reached the first line, reset cursor line to the
+                // last line and set wrapped to true so we don't wrap again
+                if wrap_around && !wrapped && cursor.line == 0 {
+                    cursor.line = self.buffer().lines.len();
+                    wrapped = true;
+                }
+            }
+        }
+        false
+    }
+
     fn text_size(&self) -> Pixels {
         let internal = self.internal();
 

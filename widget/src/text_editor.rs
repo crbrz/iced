@@ -708,6 +708,14 @@ where
     pub fn is_empty(&self) -> bool {
         self.0.borrow().editor.is_empty()
     }
+
+    /// Search text in [`Content`]
+    pub fn search(&mut self, text: &str, forwards: bool, wrap_around: bool) -> bool {
+        self.0
+            .borrow_mut()
+            .editor
+            .search(text, forwards, wrap_around)
+    }
 }
 
 impl<Renderer> Clone for Content<Renderer>
